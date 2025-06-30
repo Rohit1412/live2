@@ -1,0 +1,113 @@
+############################################
+#  Builder Stage (compile NGINX + RTMP)   #
+############################################
+FROM arm64v8/ubuntu:20.04 AS builder
+
+# Make tzdata non-interactive
+ARG DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+# Install build tools + tzdata + wget
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      wget \
+      build-essential \
+      pkg-config \
+      ca-certificates \
+      openssl \
+      libssl-dev \
+      zlib1g-dev \
+      libpcre3-dev \
+      yasm \
+      nasm \
+      tzdata && \
+    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG NGINX_VERSION=1.20.2
+ARG NGINX_RTMP_MODULE_VERSION=1.2.2
+
+# Fetch and extract NGINX + RTMP module
+RUN mkdir -p /tmp/build && cd /tmp/build && \
+    wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && \
+    wget https://github.com/arut/nginx-rtmp-module/archive/v${NGINX_RTMP_MODULE_VERSION}.tar.gz && \
+    tar -xf nginx-${NGINX_VERSION}.tar.gz && \
+    tar -xf v${NGINX_RTMP_MODULE_VERSION}.tar.gz
+
+WORKDIR /tmp/build/nginx-${NGINX_VERSION}
+
+# Configure + compile NGINX with RTMP statically
+RUN ./configure \
+      --prefix=/etc/nginx \
+      --sbin-path=/usr/sbin/nginx \
+      --conf-path=/etc/nginx/nginx.conf \
+      --error-log-path=/var/log/nginx/error.log \
+      --http-log-path=/var/log/nginx/access.log \
+      --with-http_ssl_module \
+      --with-http_v2_module \
+      --with-http_stub_status_module \
+      --with-threads \
+      --with-file-aio \
+      --with-http_gzip_static_module \
+      --add-module=/tmp/build/nginx-rtmp-module-${NGINX_RTMP_MODULE_VERSION} && \
+    make && make install
+
+# Copy stat.xsl file to nginx html directory
+RUN cp /tmp/build/nginx-rtmp-module-${NGINX_RTMP_MODULE_VERSION}/stat.xsl /etc/nginx/html/stat.xsl
+
+############################################
+#     Runtime Stage (serve RTMP/HLS)       #
+############################################
+FROM arm64v8/ubuntu:20.04
+
+# Runtime deps (no tzdata prompt here) + FFmpeg
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      openssl \
+      libpcre3 \
+      librtmp1 \
+      libtheora0 \
+      libvorbis0a \
+      libmp3lame0 \
+      libvpx6 \
+      libx264-155 \
+      libx265-179 \
+      procps \
+      net-tools \
+      iproute2 \
+      curl \
+      htop \
+      libnuma1 \
+      ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy over only what we need
+COPY --from=builder /etc/nginx       /etc/nginx
+COPY --from=builder /usr/sbin/nginx  /usr/sbin/nginx
+
+# Forward logs to Docker
+RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
+    ln -sf /dev/stderr /var/log/nginx/error.log
+
+# Copy nginx configuration (Graviton2 optimized)
+COPY conf/nginx-graviton2-all-qualities.conf /etc/nginx/nginx.conf
+
+# Copy HTML players
+COPY players /etc/nginx/html/players
+
+# Create necessary directories
+RUN mkdir -p /mnt/hls /mnt/dash && \
+    chmod 755 /mnt/hls /mnt/dash
+
+# Create health check endpoint
+RUN echo '<!DOCTYPE html><html><head><title>RTMP Server Health</title></head><body><h1>OK</h1><p>RTMP/HLS Server is running</p></body></html>' > /etc/nginx/html/health
+
+EXPOSE 1935 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

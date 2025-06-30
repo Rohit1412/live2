@@ -1,0 +1,152 @@
+# Docker Commands for RTMP/HLS Server Monitoring and Latency Optimization
+
+## Container Management
+# Build the Docker image first (run this with sudo if needed)
+sudo docker build -t rtmp-hls-server .
+
+# Start the container with optimized settings for low latency
+sudo docker run -d -p 1935:1935 -p 8080:8080 --name rtmp-server --cpus=2 --memory=2g --memory-swap=2g rtmp-hls-server
+
+# Restart the container
+sudo docker restart rtmp-server
+
+# Stop the container
+sudo docker stop rtmp-server
+
+## Monitoring Commands
+
+# Check container resource usage (CPU, memory, network, etc.)
+sudo docker stats rtmp-server
+
+# View container logs in real-time
+sudo docker logs -f rtmp-server
+
+# View container logs with timestamps
+sudo docker logs -f --timestamps rtmp-server
+
+# View only the last 100 lines of logs
+sudo docker logs --tail 100 -f rtmp-server
+
+# View logs with specific time filter
+sudo docker logs --since 30m -f rtmp-server
+
+## File and Directory Monitoring
+
+# Tail a specific log file inside the container
+sudo docker exec rtmp-server tail -f /var/log/nginx/error.log
+sudo docker exec rtmp-server tail -f /var/log/nginx/access.log
+
+# Monitor HLS fragments directory
+sudo docker exec rtmp-server watch -n 1 "ls -la /mnt/hls/"
+
+# Monitor DASH fragments directory
+sudo docker exec rtmp-server watch -n 1 "ls -la /mnt/dash/"
+
+# Continuously monitor a directory for changes
+sudo docker exec rtmp-server sh -c "while true; do ls -la /mnt/hls/; sleep 1; clear; done"
+
+## Performance Optimization
+
+# Check nginx configuration for syntax errors
+sudo docker exec rtmp-server nginx -t
+
+# Reload nginx configuration without restarting
+sudo docker exec rtmp-server nginx -s reload
+
+# Check running processes inside container
+sudo docker exec rtmp-server ps aux
+
+# Monitor ffmpeg processes
+sudo docker exec rtmp-server sh -c "ps aux | grep ffmpeg"
+
+## Latency Analysis
+
+# Check current HLS fragment and playlist settings
+sudo docker exec rtmp-server grep -A 10 "hls " /etc/nginx/nginx.conf
+
+# Check RTMP chunk size setting (affects latency)
+sudo docker exec rtmp-server grep "chunk_size" /etc/nginx/nginx.conf
+
+# Check ffmpeg encoding parameters
+sudo docker exec rtmp-server grep "exec_push" /etc/nginx/nginx.conf
+
+## Debugging
+
+# Enter container shell
+sudo docker exec -it rtmp-server bash
+
+# Check network connections
+sudo docker exec rtmp-server netstat -tulpn
+
+# Check disk usage
+sudo docker exec rtmp-server df -h
+
+## Docker Image Management
+
+# Build the standard image (without GPU acceleration)
+sudo docker build -t rtmp-hls-server .
+
+# Build for ARM architecture
+sudo docker build -f Dockerfile-aarch64 -t rtmp-hls-server:arm64 .
+
+# Build with Alpine (smaller footprint)
+sudo docker build -f Dockerfile-alpine -t rtmp-hls-server:alpine .
+
+## Latency Optimization Commands
+
+# Modify nginx.conf to reduce HLS fragment size (lower values = less latency)
+sudo docker exec -it rtmp-server bash -c "sed -i 's/hls_fragment 2;/hls_fragment 1;/g' /etc/nginx/nginx.conf && sed -i 's/hls_playlist_length 4;/hls_playlist_length 2;/g' /etc/nginx/nginx.conf"
+
+# Modify nginx.conf to reduce RTMP chunk size (can help with latency)
+sudo docker exec -it rtmp-server bash -c "sed -i 's/chunk_size 4000;/chunk_size 2000;/g' /etc/nginx/nginx.conf"
+
+# Optimize ffmpeg parameters for lower latency (add -tune zerolatency and use ultrafast preset)
+sudo docker exec -it rtmp-server bash -c "sed -i 's/-preset superfast/-preset ultrafast/g' /etc/nginx/nginx.conf"
+
+# Apply changes by reloading nginx
+sudo docker exec rtmp-server nginx -s reload
+
+# Check if changes were applied
+sudo docker exec rtmp-server grep -A 15 "application show" /etc/nginx/nginx.conf
+
+## Real-time Latency Monitoring
+
+# Monitor HLS segment creation in real-time (watch for new .ts files)
+sudo docker exec rtmp-server watch -n 0.5 "ls -lt /mnt/hls/ | head -20"
+
+# Monitor HLS segment file sizes (smaller is generally better for latency)
+sudo docker exec rtmp-server bash -c "find /mnt/hls/ -name '*.ts' -exec ls -la {} \; | sort -k5 -n"
+
+# Check time between segment creation (useful for monitoring latency)
+sudo docker exec rtmp-server bash -c "ls -lt --time-style='+%H:%M:%S.%N' /mnt/hls/*.ts | head -10"
+
+# Monitor nginx access logs for HLS segment requests (useful for client-side latency analysis)
+sudo docker exec rtmp-server bash -c "tail -f /var/log/nginx/access.log | grep '.ts'"
+
+# Check cache headers for HLS segments (important for client-side latency)
+sudo docker exec rtmp-server bash -c "curl -I http://localhost:8080/hls/stream_name.m3u8"
+
+## Advanced Latency Optimization
+
+# Create a custom nginx.conf with optimized settings for ultra-low latency
+sudo docker cp rtmp-server:/etc/nginx/nginx.conf /tmp/nginx.conf
+# Edit the file locally with your preferred editor
+# sudo nano /tmp/nginx.conf
+# Then copy it back and reload
+sudo docker cp /tmp/nginx.conf rtmp-server:/etc/nginx/nginx.conf
+sudo docker exec rtmp-server nginx -s reload
+
+# Modify TCP settings for the container to reduce latency
+sudo docker exec rtmp-server bash -c "echo 'net.ipv4.tcp_nodelay=1' >> /etc/sysctl.conf && sysctl -p"
+
+# Check current TCP settings
+sudo docker exec rtmp-server bash -c "sysctl -a | grep tcp_nodelay"
+
+# Monitor network latency between container and host
+sudo docker exec rtmp-server ping -c 10 172.17.0.1
+
+# Analyze network packet timing for HLS segments
+sudo docker exec rtmp-server bash -c "tcpdump -i eth0 port 8080 -n -s 0 -vvv | grep '.ts'"
+
+# Check for dropped frames in ffmpeg (sign of performance issues)
+sudo docker exec rtmp-server bash -c "grep 'drop=' /var/log/nginx/error.log"
