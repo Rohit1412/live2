@@ -65,9 +65,9 @@ docker run -d \
   -p 8080:8080 \
   --name rtmp-server \
   --restart unless-stopped \
-  --memory=2g \
-  --cpus=2 \
-  --shm-size=512m \
+  --memory=8g \
+  --cpus=7 \
+  --shm-size=1024m \
   rtmp-hls-server
 
 # Create necessary directories in the container with proper permissions
